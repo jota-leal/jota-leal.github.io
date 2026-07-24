@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VOID CUTTER: Resonance — V4</title>
+<style>
+html,body{width:100%;height:100%;margin:0;background:#060710;color:#fff;font-family:system-ui,sans-serif;display:grid;place-items:center}.status{max-width:680px;padding:28px 32px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:#0b0d1b;box-shadow:0 24px 80px rgba(0,0,0,.5)}h1{margin:0 0 12px;font-size:22px}p{margin:0;color:#bdb9cc;line-height:1.5}code{color:#65f2ff}
+</style>
+</head>
+<body>
+<div class="status"><h1>Cargando VOID CUTTER V4…</h1><p>La versión corregida se construye sobre el prototipo V3 y aplica el nuevo sistema de nodos perdidos, estela elegante y trail curvo en tiempo real.</p></div>
+<script>
+(async()=>{
+  const SOURCE="https://raw.githubusercontent.com/jota-leal/jota-leal.github.io/void-cutter-v3-preview/void-cutter/void_cutter_resonance_v3.html";
+
+  function replaceOne(text,pattern,replacement,label){
+    const next=text.replace(pattern,replacement);
+    if(next===text)throw new Error("No se pudo aplicar: "+label);
+    return next;
+  }
+
+  try{
+    let html=await fetch(SOURCE,{cache:"no-store"}).then(response=>{
+      if(!response.ok)throw new Error("No se pudo descargar la base V3 ("+response.status+")");
+      return response.text();
+    });
+
+    html=html.replace("<title>VOID CUTTER: Resonance — V3 consolidada</title>","<title>VOID CUTTER: Resonance — V4</title>");
+
+    if(!html.includes("playerWake=[]")){
+      html=replaceOne(
+        html,
+        "const trailCells=[],trailPoints=[],trailEchoes=[],recentTrailCells=[];",
+        "const trailCells=[],trailPoints=[],trailEchoes=[],recentTrailCells=[],playerWake=[];\nconst MAX_WAKE_POINTS=30;",
+        "buffer de estela"
+      );
+    }
+
+    if(!html.includes("const trailLivePoint=")){
+      html=replaceOne(
+        html,
+        "const pointer={down:false,x:PLAY.w/2,y:PLAY.h/2};",
+        "const pointer={down:false,x:PLAY.w/2,y:PLAY.h/2};\nconst trailLivePoint={x:0,y:0,active:false};",
+        "extremo vivo del trail"
+      );
+    }
+
+    html=replaceOne(
+      html,
+      /function clearTrail\(\)\{[^\n]*\}/,
+      "function clearTrail(){for(const id of trailCells)trail[id]=0;trailCells.length=0;trailPoints.length=0;recentTrailCells.length=0;trailLivePoint.active=false;activeTrail=false;lastTrailCell=-1;anchorActive=false}",
+      "limpieza del trail"
+    );
+
+    html=replaceOne(
+      html,
+      /function appendTrailPoint\(x,y,force=false\)\{.*?\}\n(?:function getTrailVisualPoints\(\)\{.*?\}\n)?(?=function smoothPath)/s,
+`function appendTrailPoint(x,y,force=false){
+ trailLivePoint.x=x;trailLivePoint.y=y;trailLivePoint.active=true;
+ const last=trailPoints[trailPoints.length-1];
+ if(!last||force||Math.hypot(x-last.x,y-last.y)>=1.65)trailPoints.push({x,y})
+}
+function getTrailVisualPoints(){
+ const points=trailPoints.slice();
+ if(trailLivePoint.active){
+  const last=points[points.length-1];
+  if(!last||Math.hypot(trailLivePoint.x-last.x,trailLivePoint.y-last.y)>.01)points.push({x:trailLivePoint.x,y:trailLivePoint.y})
+ }
+ return points
+}
+`,
+      "muestreo del trail"
+    );
+
+    html=replaceOne(
+      html,
+      /function commitTrailEcho\(color="#65f2ff",duration=\.3\)\{[^\n]*\}/,
+      "function commitTrailEcho(color=\"#65f2ff\",duration=.3){const points=getTrailVisualPoints();if(points.length<2)return;trailEchoes.push({points:points.map(p=>({...p})),color,life:duration,max:duration})}",
+      "eco del trail"
+    );
+
+    html=replaceOne(
+      html,
+      /function failIncursion\(\)\{.*?\}\n(?=function completeIncursionSuccess)/s,
+`function failIncursion(){
+ if(!incursion.active||incursion.phase!=="active")return;
+ const n=incursion.node;
+ n.status="lost";
+ n.retryTimer=0;
+ combo=Math.max(1,combo-.5);
+ incursion.success=false;
+ incursion.phase="exiting";
+ incursion.transition=0;
+ addFeedbackText(n.x,n.y-31,"NODO PERDIDO","#ff688f",13,1.1);
+ notice("INCURSIÓN PERDIDA · EL NODO QUEDÓ INACTIVO","#ff688f",1.8);
+ spawnBurst(n.x,n.y,"#ff688f",34);
+ beep(160,.2,.05,"sawtooth")
+}
+`,
+      "estado permanente de incursión perdida"
+    );
+
+    if(!html.includes("clearTrail();playerWake.length=0;")){
+      html=replaceOne(
+        html,
+        "safe.fill(0);trail.fill(0);corruptedHistory.length=0;reveals.length=0;clearTrail();feedbackTexts.length=0;",
+        "safe.fill(0);trail.fill(0);corruptedHistory.length=0;reveals.length=0;clearTrail();playerWake.length=0;feedbackTexts.length=0;",
+        "limpieza de la estela"
+      );
+    }
+
+    const wakeAndTrail=`function updatePlayerWake(dt){
+ for(let i=playerWake.length-1;i>=0;i--){playerWake[i].age+=dt;if(playerWake[i].age>.62)playerWake.splice(i,1)}
+ const speed=Math.hypot(player.vx,player.vy);
+ if(speed<12)return;
+ const last=playerWake[0];
+ if(!last||Math.hypot(player.x-last.x,player.y-last.y)>=3.25){
+  playerWake.unshift({x:player.x,y:player.y,age:0,speed});
+  if(playerWake.length>MAX_WAKE_POINTS)playerWake.length=MAX_WAKE_POINTS
+ }
+}
+function getWakePalette(){
+ const boosting=keys.has("Space")&&player.energy>0&&Math.hypot(player.vx,player.vy)>24;
+ if(boosting)return{glow:"rgba(184,255,101,.12)",main:"rgba(184,255,101,.55)",core:"rgba(239,255,203,.96)"};
+ if(activeTrail)return{glow:"rgba(255,99,206,.12)",main:"rgba(255,99,206,.5)",core:"rgba(255,229,249,.96)"};
+ return{glow:"rgba(101,242,255,.1)",main:"rgba(101,242,255,.46)",core:"rgba(226,255,255,.96)"}
+}
+function drawPlayerWake(){
+ if(playerWake.length<2)return;
+ const palette=getWakePalette();
+ ctx.save();ctx.globalCompositeOperation="lighter";ctx.lineCap="round";ctx.lineJoin="round";
+ for(let i=playerWake.length-1;i>0;i--){
+  const older=playerWake[i],newer=playerWake[i-1],alpha=clamp(1-older.age/.62,0,1),width=lerp(1.2,5.6,alpha);
+  ctx.beginPath();ctx.moveTo(older.x,older.y);ctx.lineTo(newer.x,newer.y);
+  ctx.globalAlpha=alpha*.34;ctx.shadowBlur=18;ctx.shadowColor=palette.main;ctx.strokeStyle=palette.glow;ctx.lineWidth=width*2.4;ctx.stroke();
+  ctx.globalAlpha=alpha*.72;ctx.shadowBlur=9;ctx.strokeStyle=palette.main;ctx.lineWidth=width;ctx.stroke();
+  ctx.globalAlpha=alpha*.92;ctx.shadowBlur=0;ctx.strokeStyle=palette.core;ctx.lineWidth=Math.max(.7,width*.23);ctx.stroke()
+ }
+ for(let i=0;i<Math.min(6,playerWake.length);i++){
+  const p=playerWake[i],a=clamp(1-p.age/.62,0,1)*(1-i/7);
+  ctx.globalAlpha=a*.75;ctx.fillStyle=palette.core;ctx.beginPath();ctx.arc(p.x,p.y,Math.max(1.1,3.5-i*.42),0,TAU);ctx.fill()
+ }
+ ctx.restore()
+}
+function drawTrail(){
+ ctx.save();ctx.lineCap="round";ctx.lineJoin="round";
+ for(const e of trailEchoes){const a=clamp(e.life/e.max,0,1);if(!smoothPath(ctx,e.points))continue;ctx.globalAlpha=a;ctx.shadowBlur=18*a;ctx.shadowColor=e.color;ctx.strokeStyle=e.color;ctx.lineWidth=5*a+1;ctx.stroke()}
+ ctx.globalAlpha=1;
+ const visualTrail=getTrailVisualPoints();
+ if(activeTrail&&visualTrail.length>1){
+  const risk=1+Math.min(2.8,trailCells.length/125),hot=clamp((risk-1)/2.8,0,1),color=hot>.72?"#ffc75f":"#ff63ce";
+  if(smoothPath(ctx,visualTrail)){
+   ctx.shadowBlur=21;ctx.shadowColor=color;ctx.strokeStyle="rgba(255,74,198,.22)";ctx.lineWidth=10+hot*3;ctx.stroke();
+   smoothPath(ctx,visualTrail);ctx.shadowBlur=10;ctx.strokeStyle=color;ctx.lineWidth=4.1+hot;ctx.stroke();
+   smoothPath(ctx,visualTrail);ctx.shadowBlur=0;ctx.strokeStyle=\`rgba(255,255,255,\${.55+hot*.35})\`;ctx.lineWidth=1.1;ctx.stroke()
+  }
+ }
+ ctx.restore()
+}
+`;
+
+    html=replaceOne(
+      html,
+      /function drawTrail\(\)\{.*?\}\n(?=function drawNodes)/s,
+      wakeAndTrail,
+      "render de estela y trail"
+    );
+
+    const drawNodes=`function drawNodes(){
+ for(const n of nodes){
+  ctx.save();ctx.translate(n.x,n.y);
+  const stable=n.status==="stabilized",queued=n.status==="queued",inc=n.status==="incursion",lost=n.status==="lost";
+  const pulse=lost?1:1+Math.sin(n.phase)*.08;
+  ctx.globalAlpha=lost?.42:(stable||inc?1:.78);
+  ctx.strokeStyle=lost?"#6d667d":queued?"#ffc75f":n.type.color;
+  ctx.lineWidth=stable?2.2:queued||inc?1.8:1.2;
+  ctx.shadowBlur=lost?0:stable||inc?22:queued?17:10;
+  ctx.shadowColor=ctx.strokeStyle;
+  if(lost){
+   ctx.setLineDash([4,5]);ctx.beginPath();ctx.arc(0,0,n.r*pulse,-Math.PI*.15,Math.PI*.62);ctx.stroke();ctx.beginPath();ctx.arc(0,0,n.r*pulse,Math.PI*.84,Math.PI*1.7);ctx.stroke();ctx.setLineDash([])
+  }else{ctx.beginPath();ctx.arc(0,0,n.r*pulse,0,TAU);ctx.stroke()}
+  ctx.rotate(Math.PI/4);ctx.fillStyle=stable?n.type.color:"rgba(255,255,255,.035)";ctx.strokeRect(-8,-8,16,16);if(stable)ctx.fillRect(-5,-5,10,10);ctx.rotate(-Math.PI/4);
+  ctx.shadowBlur=0;ctx.textAlign="center";ctx.textBaseline="middle";
+  if(lost){ctx.strokeStyle="#ff688f";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-4,-4);ctx.lineTo(4,4);ctx.moveTo(4,-4);ctx.lineTo(-4,4);ctx.stroke()}
+  else{ctx.fillStyle="#fff";ctx.font="900 9px Inter,system-ui";ctx.fillText(n.type.short,0,0)}
+  ctx.restore()
+ }
+}
+`;
+
+    html=replaceOne(
+      html,
+      /function drawNodes\(\)\{.*?\}\n(?=function drawEnemies)/s,
+      drawNodes,
+      "nodos perdidos"
+    );
+
+    if(!html.includes("updateIncursion(dt);updatePlayerWake(dt);return")){
+      html=replaceOne(html,"if(incursion.active){updateIncursion(dt);return}","if(incursion.active){updateIncursion(dt);updatePlayerWake(dt);return}","estela en incursión");
+    }
+
+    if(!html.includes("updatePlayer(dt);updatePlayerWake(dt);updateEnemies(dt);")){
+      html=replaceOne(html,"updatePlayer(dt);updateEnemies(dt);","updatePlayer(dt);updatePlayerWake(dt);updateEnemies(dt);","estela en nivel");
+    }
+
+    if(!html.includes("drawSpores();drawPlayerWake();drawTrail();")){
+      html=replaceOne(html,"drawNodes();drawPortal();drawSpores();drawTrail();drawAnchor();","drawNodes();drawPortal();drawSpores();drawPlayerWake();drawTrail();drawAnchor();","orden de dibujo");
+    }
+
+    document.open();
+    document.write(html);
+    document.close();
+  }catch(error){
+    document.querySelector(".status").innerHTML=`<h1>No se pudo construir la V4</h1><p>${String(error.message||error)}</p><p style="margin-top:12px">Abrí este archivo con conexión a Internet o probá nuevamente.</p>`;
+    console.error(error);
+  }
+})();
+</script>
+</body>
+</html>
