@@ -1,0 +1,81 @@
+name: Fix Void Cutter trail rendering
+
+on:
+  push:
+    branches:
+      - void-cutter-v3-preview
+    paths:
+      - .github/workflows/fix-void-cutter-trail.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: void-cutter-v3-preview
+
+      - name: Patch live trail sampling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("void-cutter/void_cutter_resonance_v3.html")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  'const pointer={down:false,x:PLAY.w/2,y:PLAY.h/2};',
+                  'const pointer={down:false,x:PLAY.w/2,y:PLAY.h/2};\nconst trailLivePoint={x:0,y:0,active:false};'
+              ),
+              (
+                  'function clearTrail(){for(const id of trailCells)trail[id]=0;trailCells.length=0;trailPoints.length=0;recentTrailCells.length=0;activeTrail=false;lastTrailCell=-1;anchorActive=false}',
+                  'function clearTrail(){for(const id of trailCells)trail[id]=0;trailCells.length=0;trailPoints.length=0;recentTrailCells.length=0;trailLivePoint.active=false;activeTrail=false;lastTrailCell=-1;anchorActive=false}'
+              ),
+              (
+                  'function appendTrailPoint(x,y,force=false){const last=trailPoints[trailPoints.length-1];if(!last||force||Math.hypot(x-last.x,y-last.y)>=2.2)trailPoints.push({x,y});else{last.x=x;last.y=y}}',
+                  'function appendTrailPoint(x,y,force=false){trailLivePoint.x=x;trailLivePoint.y=y;trailLivePoint.active=true;const last=trailPoints[trailPoints.length-1];if(!last||force||Math.hypot(x-last.x,y-last.y)>=1.75)trailPoints.push({x,y})}\nfunction getTrailVisualPoints(){const points=trailPoints.slice();if(trailLivePoint.active){const last=points[points.length-1];if(!last||Math.hypot(trailLivePoint.x-last.x,trailLivePoint.y-last.y)>.01)points.push({x:trailLivePoint.x,y:trailLivePoint.y})}return points}'
+              ),
+              (
+                  'function commitTrailEcho(color="#65f2ff",duration=.3){if(trailPoints.length<2)return;trailEchoes.push({points:trailPoints.map(p=>({...p})),color,life:duration,max:duration})}',
+                  'function commitTrailEcho(color="#65f2ff",duration=.3){const points=getTrailVisualPoints();if(points.length<2)return;trailEchoes.push({points:points.map(p=>({...p})),color,life:duration,max:duration})}'
+              ),
+              (
+                  'ctx.globalAlpha=1;if(activeTrail&&trailPoints.length>1){const risk=1+Math.min(2.8,trailCells.length/125),hot=clamp((risk-1)/2.8,0,1),color=hot>.72?"#ffc75f":"#ff63ce";if(smoothPath(ctx,trailPoints)){ctx.shadowBlur=21;ctx.shadowColor=color;ctx.strokeStyle="rgba(255,74,198,.22)";ctx.lineWidth=10+hot*3;ctx.stroke();smoothPath(ctx,trailPoints);ctx.shadowBlur=10;ctx.strokeStyle=color;ctx.lineWidth=4.1+hot;ctx.stroke();smoothPath(ctx,trailPoints);ctx.shadowBlur=0;ctx.strokeStyle=`rgba(255,255,255,${.55+hot*.35})`;ctx.lineWidth=1.1;ctx.stroke()}}ctx.restore()}',
+                  'ctx.globalAlpha=1;const visualTrail=getTrailVisualPoints();if(activeTrail&&visualTrail.length>1){const risk=1+Math.min(2.8,trailCells.length/125),hot=clamp((risk-1)/2.8,0,1),color=hot>.72?"#ffc75f":"#ff63ce";if(smoothPath(ctx,visualTrail)){ctx.shadowBlur=21;ctx.shadowColor=color;ctx.strokeStyle="rgba(255,74,198,.22)";ctx.lineWidth=10+hot*3;ctx.stroke();smoothPath(ctx,visualTrail);ctx.shadowBlur=10;ctx.strokeStyle=color;ctx.lineWidth=4.1+hot;ctx.stroke();smoothPath(ctx,visualTrail);ctx.shadowBlur=0;ctx.strokeStyle=`rgba(255,255,255,${.55+hot*.35})`;ctx.lineWidth=1.1;ctx.stroke()}}ctx.restore()}'
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"Expected exactly one match, found {count}: {old[:90]}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+
+      - name: Validate JavaScript syntax
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('void-cutter/void_cutter_resonance_v3.html').read_text(encoding='utf-8')
+          match = re.search(r'<script>([\s\S]*?)</script>', html)
+          if not match:
+              raise SystemExit('Script block not found')
+          Path('/tmp/void-cutter.js').write_text(match.group(1), encoding='utf-8')
+          PY
+          node --check /tmp/void-cutter.js
+
+      - name: Commit corrected HTML
+        shell: bash
+        run: |
+          git config user.name "OpenAI"
+          git config user.email "openai@users.noreply.github.com"
+          git add void-cutter/void_cutter_resonance_v3.html
+          git commit -m "Fix live trail curve sampling"
+          git push origin HEAD:void-cutter-v3-preview
